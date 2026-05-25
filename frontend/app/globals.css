@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark analyst theme — always dark, no light-mode toggle */
+  :root {
+    --background: 240 7% 5%;
+    --foreground: 210 18% 93%;
+    --card: 240 7% 8%;
+    --card-foreground: 210 18% 93%;
+    --popover: 240 7% 8%;
+    --popover-foreground: 210 18% 93%;
+    --primary: 213 94% 68%;
+    --primary-foreground: 240 7% 5%;
+    --secondary: 240 5% 13%;
+    --secondary-foreground: 210 18% 93%;
+    --muted: 240 5% 13%;
+    --muted-foreground: 215 13% 52%;
+    --accent: 240 5% 13%;
+    --accent-foreground: 210 18% 93%;
+    --destructive: 0 62% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 4% 13%;
+    --input: 240 4% 13%;
+    --ring: 213 94% 68%;
+    --radius: 0.375rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  /* Thin scrollbars for dense information display */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-background;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+}
+
+@layer utilities {
+  .gold-positive {
+    @apply text-amber-400;
+  }
+  .gold-negative {
+    @apply text-red-400;
+  }
+  .side-blue {
+    @apply text-blue-400;
+  }
+  .side-red {
+    @apply text-red-400;
+  }
+}
