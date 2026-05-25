@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+*.whl
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# uv
+# Uncomment the next line if you do NOT want to commit the lockfile.
+# uv.lock
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Data — never commit raw game data or the DuckDB database
+/data/*
+!/data/.gitkeep
+
+# Node / Next.js (Phase 2)
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
