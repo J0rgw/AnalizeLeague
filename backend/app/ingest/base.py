@@ -8,6 +8,7 @@ Concrete implementations:
 The interface returns raw dicts. Parsing into domain models happens in
 the digest layer, keeping this layer thin and swappable.
 """
+
 from __future__ import annotations
 
 import abc

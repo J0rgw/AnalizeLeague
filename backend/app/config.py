@@ -8,6 +8,7 @@ Usage:
 The .env file is resolved relative to the working directory. Run all
 commands from /backend so that backend/.env is found automatically.
 """
+
 from __future__ import annotations
 
 from pydantic import Field
@@ -39,6 +40,11 @@ class Settings(BaseSettings):
     )
 
     env: str = Field(default="dev", description="Runtime environment: dev | prod")
+
+    riot_region: str = Field(
+        default="europe",
+        description="Riot API regional routing cluster: europe | americas | asia | sea",
+    )
 
     grid_api_key: str = Field(
         default="",

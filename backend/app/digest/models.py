@@ -11,6 +11,7 @@ Full schema documentation: /.ai/digest-schema.md
 All field names match the digest-schema.md contract exactly.
 Convention: gold/cs/xp diffs are positive when the analyzed team (meta.side) is ahead.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -20,7 +21,7 @@ class GameMeta(BaseModel):
     game_id: str
     patch: str
     duration_s: int
-    side: str   # "blue" | "red" — the team being analyzed
+    side: str  # "blue" | "red" — the team being analyzed
     result: str  # "win" | "loss"
 
 
@@ -45,7 +46,7 @@ class Draft(BaseModel):
 
 class LaneState(BaseModel):
     at_min: int
-    lane: str        # "top" | "jng" | "mid" | "bot" | "sup"
+    lane: str  # "top" | "jng" | "mid" | "bot" | "sup"
     gold_diff: int
     cs_diff: int
     xp_diff: int
@@ -53,26 +54,26 @@ class LaneState(BaseModel):
 
 
 class Objective(BaseModel):
-    t: int            # timestamp in seconds
-    type: str         # "baron" | "dragon" | "herald" | "tower" | "inhibitor"
-    subtype: str      # e.g. "infernal", "outer", "" for none
-    team: str         # "blue" | "red"
+    t: int  # timestamp in seconds
+    type: str  # "baron" | "dragon" | "herald" | "tower" | "inhibitor"
+    subtype: str  # e.g. "infernal", "outer", "" for none
+    team: str  # "blue" | "red"
     gold_diff_at_event: int
-    tradeoff: str     # what the other team did simultaneously, or ""
+    tradeoff: str  # what the other team did simultaneously, or ""
 
 
 class Fight(BaseModel):
     t: int
-    where: str        # map zone label, e.g. "river_top", "baron_pit"
+    where: str  # map zone label, e.g. "river_top", "baron_pit"
     kills_for: int
     kills_against: int
-    gold_swing: int   # positive = analyzed team gained
-    led_to: str       # subsequent objective, e.g. "baron", "tower_top", ""
+    gold_swing: int  # positive = analyzed team gained
+    led_to: str  # subsequent objective, e.g. "baron", "tower_top", ""
     players_near: list[str]
 
 
 class JunglePath(BaseModel):
-    blue: list[str]   # ordered camp label strings, e.g. ["red_buff", "raptors", ...]
+    blue: list[str]  # ordered camp label strings, e.g. ["red_buff", "raptors", ...]
     red: list[str]
 
 
