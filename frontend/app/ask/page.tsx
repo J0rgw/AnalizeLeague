@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MessageSquare, Send, Loader2, AlertCircle, User, Bot } from "lucide-react";
+import { Send, Loader2, AlertCircle, User, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -158,14 +158,11 @@ export default function AskPage() {
   return (
     <div className="mx-auto flex h-[calc(100vh-3.5rem)] max-w-screen-md flex-col px-6 py-6">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-5 shrink-0">
-        <MessageSquare className="h-5 w-5 text-primary" />
-        <div>
-          <h1 className="text-lg font-semibold">Scrim Q&amp;A</h1>
-          <p className="text-xs text-muted-foreground">
-            Ask anything about your scrim history
-          </p>
-        </div>
+      <div className="mb-5 shrink-0 animate-fade-in">
+        <h1 className="text-xl font-semibold tracking-tight">Scrim Q&amp;A</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Ask anything about your scrim history.
+        </p>
       </div>
 
       {/* Messages area */}

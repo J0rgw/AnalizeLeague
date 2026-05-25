@@ -54,8 +54,14 @@ def test_list_games_after_seed(test_client: TestClient, sample_raw_game: dict[st
 
 
 def test_get_digest_not_found(test_client: TestClient) -> None:
-    resp = test_client.get("/games/NONEXISTENT/digest")
+    resp = test_client.get("/games/EUW1_NOTFOUND/digest")
     assert resp.status_code == 404
+
+
+def test_get_digest_invalid_id_format(test_client: TestClient) -> None:
+    # Bare word fails the Riot match-ID regex enforced on the path param.
+    resp = test_client.get("/games/NONEXISTENT/digest")
+    assert resp.status_code == 422
 
 
 def test_get_digest_ok(test_client: TestClient, sample_raw_game: dict[str, Any]) -> None:
@@ -75,7 +81,7 @@ def test_get_digest_ok(test_client: TestClient, sample_raw_game: dict[str, Any])
 
 
 def test_get_agenda_not_found(test_client: TestClient) -> None:
-    resp = test_client.get("/games/NONEXISTENT/agenda")
+    resp = test_client.get("/games/EUW1_NOTFOUND/agenda")
     assert resp.status_code == 404
 
 

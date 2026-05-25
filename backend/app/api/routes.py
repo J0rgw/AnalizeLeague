@@ -17,8 +17,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Path, Request
+from pydantic import BaseModel, Field
 
 from app.digest.models import GameDigest
 from app.llm.agent import AgendaItem, QAResponse, answer_question, generate_agenda
@@ -28,12 +28,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Riot match-v5 IDs look like "EUW1_6900000000"; test fixtures use "EUW1_TEST123".
+_GAME_ID_PATTERN = r"^[A-Z]{2,4}\d{1,3}_[A-Z0-9]+$"
+GameIdPath = Path(..., pattern=_GAME_ID_PATTERN, description="Riot match ID, e.g. EUW1_6900000000")
+
 
 # ── Request / response models ─────────────────────────────────────────────────
 
 
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(min_length=1, max_length=2000)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -56,7 +60,7 @@ async def get_games(request: Request) -> list[dict[str, Any]]:
 
 
 @router.get("/games/{game_id}/digest", response_model=GameDigest)
-async def get_game_digest(game_id: str, request: Request) -> GameDigest:
+async def get_game_digest(request: Request, game_id: str = GameIdPath) -> GameDigest:
     """Return the full GameDigest for a stored game."""
     digest = get_game(_db(request), game_id)
     if digest is None:
@@ -71,7 +75,7 @@ async def get_game_digest(game_id: str, request: Request) -> GameDigest:
 
 
 @router.get("/games/{game_id}/agenda", response_model=list[AgendaItem])
-async def get_game_agenda(game_id: str, request: Request) -> list[AgendaItem]:
+async def get_game_agenda(request: Request, game_id: str = GameIdPath) -> list[AgendaItem]:
     """
     Return the ranked review agenda for a game.
 

@@ -1,6 +1,14 @@
 import type { Metadata } from "next";
+import { Urbanist } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/nav";
+
+const urbanist = Urbanist({
+  subsets: ["latin"],
+  weight: ["600", "800"],
+  variable: "--font-display",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "AnalizeLeague",
@@ -13,7 +21,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={urbanist.variable}>
       <body>
         <div className="min-h-screen flex flex-col">
           <Nav />

@@ -3,27 +3,48 @@
 @tailwind utilities;
 
 @layer base {
-  /* Dark analyst theme — always dark, no light-mode toggle */
+  /*
+    Design tokens — OKLCH channel values (L% C H, no oklch() wrapper).
+    Tailwind config references them as: oklch(var(--token) / <alpha-value>)
+    Raw CSS usage: oklch(var(--token))
+
+    Theme: warm charcoal — hue 65 (yellow-amber direction) at low chroma for neutrals.
+    Scene: analyst at 1am, dim room, dual monitors. Dark but not cold.
+  */
   :root {
-    --background: 240 7% 5%;
-    --foreground: 210 18% 93%;
-    --card: 240 7% 8%;
-    --card-foreground: 210 18% 93%;
-    --popover: 240 7% 8%;
-    --popover-foreground: 210 18% 93%;
-    --primary: 213 94% 68%;
-    --primary-foreground: 240 7% 5%;
-    --secondary: 240 5% 13%;
-    --secondary-foreground: 210 18% 93%;
-    --muted: 240 5% 13%;
-    --muted-foreground: 215 13% 52%;
-    --accent: 240 5% 13%;
-    --accent-foreground: 210 18% 93%;
-    --destructive: 0 62% 55%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 240 4% 13%;
-    --input: 240 4% 13%;
-    --ring: 213 94% 68%;
+    /* Surface scale */
+    --background:              9.5%  0.005 65;
+    --foreground:             91%   0.007 78;
+
+    --card:                   12.5% 0.006 65;
+    --card-foreground:        91%   0.007 78;
+
+    --popover:                12.5% 0.006 65;
+    --popover-foreground:     91%   0.007 78;
+
+    --secondary:              16.5% 0.007 65;
+    --secondary-foreground:   91%   0.007 78;
+
+    --muted:                  16.5% 0.007 65;
+    --muted-foreground:       63%   0.010 72;
+
+    --accent:                 16.5% 0.007 65;
+    --accent-foreground:      91%   0.007 78;
+
+    /* Brand accent — warm brass/amber */
+    --primary:                73%   0.13  70;
+    --primary-foreground:     10%   0.005 65;
+
+    /* Semantic */
+    --destructive:            62%   0.17  25;
+    --destructive-foreground: 91%   0.007 78;
+
+    /* Structure */
+    --border:                 20%   0.005 65;
+    --input:                  20%   0.005 65;
+    --ring:                   73%   0.13  70;
+
+    /* Radius */
     --radius: 0.375rem;
   }
 }
@@ -36,33 +57,29 @@
     @apply bg-background text-foreground antialiased;
     font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   }
-  /* Thin scrollbars for dense information display */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
   }
   ::-webkit-scrollbar-track {
     @apply bg-background;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-muted rounded-full;
+    @apply bg-border rounded-full;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-muted-foreground/40;
+    background-color: oklch(var(--muted-foreground) / 0.35);
   }
 }
 
 @layer utilities {
-  .gold-positive {
-    @apply text-amber-400;
-  }
-  .gold-negative {
-    @apply text-red-400;
-  }
-  .side-blue {
-    @apply text-blue-400;
-  }
-  .side-red {
-    @apply text-red-400;
-  }
+  /* Semantic result / side colors, disconnected from Tailwind's palette */
+  .text-win  { color: oklch(72% 0.13 145); }
+  .text-loss { color: oklch(62% 0.15 25);  }
+  .text-blue-side { color: oklch(68% 0.11 245); }
+  .text-red-side  { color: oklch(62% 0.15 25);  }
+
+  /* Gold diff chart */
+  .gold-positive { color: oklch(78% 0.14 78); }
+  .gold-negative { color: oklch(62% 0.15 25); }
 }

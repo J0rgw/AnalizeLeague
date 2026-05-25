@@ -98,7 +98,7 @@ export default function GameDetailPage() {
     <div className="mx-auto max-w-screen-xl px-6 py-6">
       {/* Back */}
       <Link
-        href="/"
+        href="/app"
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-5"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -109,7 +109,7 @@ export default function GameDetailPage() {
       {!loading && error && <ErrorState message={error} onRetry={load} />}
 
       {!loading && !error && digest && (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-fade-up">
           {/* Draft header */}
           <Card>
             <CardContent className="p-5">

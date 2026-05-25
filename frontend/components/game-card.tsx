@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { ChevronRight, Clock, Swords } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDuration } from "@/lib/utils";
 import type { GameSummary } from "@/lib/api";
@@ -14,45 +13,45 @@ export function GameCard({ game, index }: GameCardProps) {
   const { game_id, patch, duration_s, side, result } = game;
 
   return (
-    <Link href={`/games/${encodeURIComponent(game_id)}`}>
-      <Card className="group cursor-pointer transition-all duration-150 hover:border-primary/40 hover:bg-card/80">
-        <CardContent className="flex items-center gap-4 p-4">
-          {/* Index */}
-          <span className="w-6 text-center text-xs text-muted-foreground font-mono">
-            {index + 1}
-          </span>
+    <Link
+      href={`/games/${encodeURIComponent(game_id)}`}
+      className="group flex items-center gap-4 border-b border-border py-4 transition-colors duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] hover:bg-muted/40 animate-fade-in"
+      style={{ animationDelay: `${index * 45}ms` }}
+    >
+      {/* Index */}
+      <span className="w-6 shrink-0 text-right font-mono text-xs text-muted-foreground/50">
+        {index + 1}
+      </span>
 
-          {/* Result + side */}
-          <div className="flex flex-col items-center gap-1 w-16">
-            <Badge variant={result === "win" ? "win" : "loss"}>
-              {result === "win" ? "WIN" : "LOSS"}
-            </Badge>
-            <Badge variant={side === "blue" ? "blue" : "red"} className="capitalize">
-              {side}
-            </Badge>
-          </div>
+      {/* Result + side */}
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Badge variant={result === "win" ? "win" : "loss"}>
+          {result === "win" ? "W" : "L"}
+        </Badge>
+        <Badge variant={side === "blue" ? "blue" : "red"}>
+          {side === "blue" ? "Blue" : "Red"}
+        </Badge>
+      </div>
 
-          {/* Game ID */}
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground truncate">{game_id}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Patch {patch}</p>
-          </div>
+      {/* Game ID + patch */}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{game_id}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">Patch {patch}</p>
+      </div>
 
-          {/* Duration */}
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Clock className="h-3 w-3" />
-            <span className="font-mono">{formatDuration(duration_s)}</span>
-          </div>
+      {/* Duration */}
+      <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+        <Clock className="h-3 w-3" />
+        <span className="font-mono">{formatDuration(duration_s)}</span>
+      </div>
 
-          {/* Fights hint */}
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Swords className="h-3 w-3" />
-            <span>Review</span>
-          </div>
+      {/* Review hint — hidden on small screens */}
+      <div className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground sm:flex">
+        <Swords className="h-3 w-3" />
+        <span>Review</span>
+      </div>
 
-          <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-        </CardContent>
-      </Card>
+      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
     </Link>
   );
 }

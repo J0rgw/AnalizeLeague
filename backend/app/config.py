@@ -11,8 +11,13 @@ commands from /backend so that backend/.env is found automatically.
 
 from __future__ import annotations
 
-from pydantic import Field
+import os
+from urllib.parse import urlparse
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", ""}
 
 
 class Settings(BaseSettings):
@@ -33,6 +38,11 @@ class Settings(BaseSettings):
         default="llama3.1",
         description="Ollama model tag to use for generation",
     )
+    ollama_timeout_s: int = Field(
+        default=60,
+        ge=1,
+        description="Per-request timeout (seconds) for Ollama chat calls",
+    )
 
     duckdb_path: str = Field(
         default="../data/analizeleague.duckdb",
@@ -50,6 +60,35 @@ class Settings(BaseSettings):
         default="",
         description="GRID Esports API key (production only, leave empty in dev)",
     )
+
+    allowed_origins: list[str] = Field(
+        default=["http://localhost:3000"],
+        description="CORS allowed origins. Comma-separated in env, e.g. http://a,http://b",
+    )
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, v: object) -> object:
+        # pydantic-settings reads env vars as strings; accept "a,b,c" form.
+        if isinstance(v, str):
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return v
+
+    @field_validator("ollama_host")
+    @classmethod
+    def _must_be_loopback(cls, v: str) -> str:
+        # Enforces the product's privacy promise: scrim data never leaves the box.
+        # Opt-out exists for users running Ollama on a trusted LAN host.
+        if os.getenv("ALLOW_REMOTE_LLM") == "1":
+            return v
+        host = (urlparse(v).hostname or "").lower()
+        if host in _LOOPBACK_HOSTS:
+            return v
+        raise ValueError(
+            f"OLLAMA_HOST={v!r} is not loopback (got host={host!r}). "
+            "Scrim data must stay on this machine. "
+            "Set ALLOW_REMOTE_LLM=1 to override at your own risk."
+        )
 
 
 settings = Settings()
