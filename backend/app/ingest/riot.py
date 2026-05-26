@@ -27,7 +27,9 @@ from app.ingest.base import DataSource
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://{region}.api.riotgames.com"
-_CACHE_ROOT = Path("../data/cache")
+# Anchor the cache to the repo root regardless of CWD.
+# riot.py lives at backend/app/ingest/riot.py → parents[3] is the repo root.
+_CACHE_ROOT = Path(__file__).resolve().parents[3] / "data" / "cache"
 
 
 class _RateLimitError(Exception):

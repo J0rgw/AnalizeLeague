@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
@@ -21,6 +22,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.config import settings
 from app.storage.db import init_db
+
+
+def _package_version() -> str:
+    """Read version from the installed package metadata so pyproject.toml is the single source of truth."""
+    try:
+        return version("analizeleague-backend")
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
+
 
 logging.basicConfig(
     level=logging.DEBUG if settings.env == "dev" else logging.INFO,
@@ -42,7 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="AnalizeLeague API",
     description="AI assistant backend for League of Legends analysts and coaches.",
-    version="0.2.0",
+    version=_package_version(),
     lifespan=lifespan,
 )
 

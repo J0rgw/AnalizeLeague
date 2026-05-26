@@ -24,6 +24,7 @@ item, and ward events with timestamps.
 | **Champion positions**: 1-minute interval snapshots only. | Cannot reconstruct fights below 60-second granularity. |
 | **No live data**: Available only after the game ends. | No real-time coaching. |
 | **Key expiry**: 24-hour TTL on dev keys. | Manual renewal required. |
+| **No per-camp jungle events**: the timeline emits `ELITE_MONSTER_KILL` for dragon / herald / baron / void grubs only. Regular camps (blue buff, red buff, gromp, wolves, raptors, krugs) produce no event. | Jungle pathing is **reconstructed approximately** from per-minute `jungleMinionsKilled` deltas + the jungler's position at that frame, mapped to the nearest known camp centre. Two adjacent camps cleared inside one frame yield only one label. |
 
 ---
 
@@ -63,14 +64,14 @@ High-frequency positional event stream during (or after) games.
 
 ### What GRID adds over Riot API
 
-| Capability                       | Riot API         | GRID                     |
-|----------------------------------|------------------|--------------------------|
-| Ward positions (map coordinates) | No               | Yes — Series Events      |
-| Champion positions (granular)    | 1-min frames     | Sub-second — Series Events|
-| Jungle camp clear timestamps     | Approximate      | Exact — Series Events    |
-| Historical aggregates            | Limited          | Yes — Central Data       |
-| Live streaming during game       | No               | Yes — Series Events      |
-| Scrim data access                | No               | Yes (with agreement)     |
+| Capability                       | Riot API                                            | GRID                     |
+|----------------------------------|-----------------------------------------------------|--------------------------|
+| Ward positions (map coordinates) | No                                                  | Yes — Series Events      |
+| Champion positions (granular)    | 1-min frames                                        | Sub-second — Series Events|
+| Jungle camp clear timestamps     | Approximate (inferred from jungleMinionsKilled + position) | Exact — Series Events    |
+| Historical aggregates            | Limited                                             | Yes — Central Data       |
+| Live streaming during game       | No                                                  | Yes — Series Events      |
+| Scrim data access                | No                                                  | Yes (with agreement)     |
 
 ### Cost model
 GRID access is negotiated per partnership. For the demo, the Riot API (free) is used.

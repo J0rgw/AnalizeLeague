@@ -19,6 +19,7 @@ from typing import Any
 
 import polars as pl
 
+from app.digest.champions import resolve_champion_name
 from app.digest.models import (
     Draft,
     DraftBans,
@@ -57,15 +58,30 @@ _POS_TO_LANE: dict[str, str] = {
     "UTILITY": "sup",
 }
 
-_CAMP_LABELS: dict[str, str] = {
-    "BLUE_SENTINEL": "blue_buff",
-    "RED_LIZARD": "red_buff",
-    "GROMP": "gromp",
-    "MURK_WOLF": "wolves",
-    "RAPTOR": "raptors",
-    "KRUG": "krugs",
-    "CRAB": "scuttle_crab",
-}
+# Approximate camp centres in Riot's coordinate space (0..14820). Used to
+# infer which camp a jungler just cleared based on their position when
+# jungleMinionsKilled increments — Riot timeline frames are 1-minute snapshots
+# and don't emit per-camp events, so this is necessarily fuzzy. GRID Series
+# Events provide exact per-clear timestamps; see /.ai/data-sources.md.
+_JUNGLE_CAMP_CENTERS: tuple[tuple[str, int, int], ...] = (
+    # Blue-side jungle
+    ("gromp", 2_150, 8_400),
+    ("blue_buff", 3_850, 7_950),
+    ("wolves", 3_900, 6_500),
+    ("raptors", 6_900, 5_500),
+    ("red_buff", 7_850, 4_100),
+    ("krugs", 8_350, 2_500),
+    # Red-side jungle (same camp types, mirrored)
+    ("krugs", 6_550, 12_300),
+    ("red_buff", 7_050, 10_500),
+    ("raptors", 7_900, 9_500),
+    ("wolves", 10_800, 8_350),
+    ("blue_buff", 10_950, 6_850),
+    ("gromp", 12_750, 6_400),
+    # Scuttle crabs (river)
+    ("scuttle_crab", 4_600, 10_100),
+    ("scuttle_crab", 10_500, 4_500),
+)
 
 _EPIC_LABELS: dict[str, str] = {
     "BARON_NASHOR": "baron",
@@ -205,7 +221,7 @@ def _build_meta(raw: dict[str, Any], analyzed_team_id: int) -> GameMeta:
     )
 
 
-def _build_draft(match_info: dict[str, Any]) -> Draft:
+def _build_draft(match_info: dict[str, Any], patch: str | None = None) -> Draft:
     blue: dict[str, str] = {}
     red: dict[str, str] = {}
     for p in match_info.get("participants", []):
@@ -227,7 +243,10 @@ def _build_draft(match_info: dict[str, Any]) -> Draft:
     blue_bans: list[str] = []
     red_bans: list[str] = []
     for team in match_info.get("teams", []):
-        bans = [str(b.get("championId", "")) for b in team.get("bans", [])]
+        # Resolve numeric championIds to display names via Data Dragon. The
+        # resolver degrades to str(id) if both network and cache fail, so
+        # the schema (list[str]) is never violated.
+        bans = [resolve_champion_name(b.get("championId", ""), patch) for b in team.get("bans", [])]
         while len(bans) < 5:
             bans.append("")
         if team["teamId"] == _BLUE_TEAM:
@@ -303,7 +322,9 @@ def _build_lane_states(
 
 def _build_team_gold_diff_by_min(df: pl.DataFrame, analyzed_team_id: int) -> list[int]:
     opp = _RED_TEAM if analyzed_team_id == _BLUE_TEAM else _BLUE_TEAM
-    max_ms = int(df["t_ms"].max() or 0)
+    # Polars typing for .max() is a wide union; narrow to int explicitly.
+    raw_max = df["t_ms"].max()
+    max_ms = int(raw_max) if isinstance(raw_max, (int, float)) else 0
     max_min = max_ms // 60_000
     result: list[int] = []
     for minute in range(max_min + 1):
@@ -503,32 +524,89 @@ def _build_fights(
     return fights
 
 
+def _nearest_camp_label(x: int, y: int) -> str:
+    """Return the closest known jungle-camp label to (x, y)."""
+    best_label = ""
+    best_d2 = float("inf")
+    for label, cx, cy in _JUNGLE_CAMP_CENTERS:
+        d2 = (x - cx) ** 2 + (y - cy) ** 2
+        if d2 < best_d2:
+            best_d2 = d2
+            best_label = label
+    return best_label
+
+
 def _build_jungle_path(
+    frames: list[dict[str, Any]],
     all_events: list[dict[str, Any]],
     pid_to_team: dict[int, int],
     pid_to_lane: dict[int, str],
 ) -> JunglePath:
-    """Reconstruct the first-clear jungle path (first 6 minutes)."""
+    """
+    Reconstruct the early jungle clear path (first ~4 minutes), APPROXIMATELY.
+
+    Riot timeline frames are 1-minute snapshots and do NOT emit a per-camp
+    event (only ELITE_MONSTER_KILL for dragon/herald/baron/grubs exists).
+    We therefore infer camps by:
+      1. Watching each jungler's `jungleMinionsKilled` counter for increments
+         between frames — a positive delta means at least one camp was cleared
+         in that minute.
+      2. Labelling the increment with the camp closest to the jungler's
+         position at the end of that frame.
+      3. Appending real epic monsters from ELITE_MONSTER_KILL events on top.
+
+    Limitations of this approximation: a jungler clearing two adjacent camps
+    in one minute only contributes one label, and a jungler standing between
+    two camps may be misattributed. GRID Series Events provide exact
+    sub-second clear timestamps and resolve both issues; see
+    /.ai/data-sources.md for the data-source comparison.
+    """
     blue: list[str] = []
     red: list[str] = []
-    cutoff_ms = 6 * 60_000
+    cutoff_ms = 4 * 60_000
 
+    junglers = [pid for pid, lane in pid_to_lane.items() if lane == "jng"]
+    prev_jm: dict[int, int] = {pid: 0 for pid in junglers}
+
+    for frame in frames:
+        t_ms = int(frame.get("timestamp", 0))
+        if t_ms > cutoff_ms:
+            break
+        pframes: dict[str, Any] = frame.get("participantFrames", {})
+        for pid in junglers:
+            pf = pframes.get(str(pid))
+            if not pf:
+                continue
+            jm = int(pf.get("jungleMinionsKilled", 0))
+            delta = jm - prev_jm[pid]
+            prev_jm[pid] = jm
+            if delta <= 0 or t_ms == 0:
+                continue
+            pos = pf.get("position", {})
+            x, y = int(pos.get("x", 0)), int(pos.get("y", 0))
+            label = _nearest_camp_label(x, y)
+            if not label:
+                continue
+            team = pid_to_team.get(pid, 0)
+            if team == _BLUE_TEAM:
+                blue.append(label)
+            elif team == _RED_TEAM:
+                red.append(label)
+
+    # Real epic monsters within the cutoff (these DO emit timeline events).
     for e in all_events:
         if int(e.get("timestamp", 0)) > cutoff_ms:
             break
-        etype = e.get("type", "")
-        if etype not in ("MONSTER_KILL", "ELITE_MONSTER_KILL"):
+        if e.get("type") != "ELITE_MONSTER_KILL":
             continue
         killer = int(e.get("killerId", 0))
         if pid_to_lane.get(killer) != "jng":
             continue
         monster = e.get("monsterType", "")
-        if monster in _CAMP_LABELS:
-            label = _CAMP_LABELS[monster]
+        if monster == "DRAGON":
+            label = "dragon"
         elif monster in _EPIC_LABELS:
             label = _EPIC_LABELS[monster]
-        elif monster == "DRAGON":
-            label = "dragon"
         else:
             continue
         team = pid_to_team.get(killer, 0)
@@ -621,12 +699,12 @@ def build_digest(
     df = _build_frames_df(participants, frames)
 
     meta = _build_meta(raw_game_data, analyzed_team_id)
-    draft = _build_draft(match_info)
+    draft = _build_draft(match_info, patch=meta.patch)
     lane_states = _build_lane_states(df, all_events, analyzed_team_id, pid_to_team, pid_to_lane)
     team_gold_diff = _build_team_gold_diff_by_min(df, analyzed_team_id)
     objectives = _build_objectives(all_events, analyzed_team_id, df)
     fights = _build_fights(all_events, analyzed_team_id, pid_to_team, pid_to_champ, df, objectives)
-    jungle_path = _build_jungle_path(all_events, pid_to_team, pid_to_lane)
+    jungle_path = _build_jungle_path(frames, all_events, pid_to_team, pid_to_lane)
     recalls = _build_recalls(frames, pid_to_team, pid_to_champ)
 
     logger.info(

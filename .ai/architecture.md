@@ -19,34 +19,44 @@
 │  build_digest()  (app/digest/builder.py)         │
 │  Polars dataframe operations:                    │
 │    - gold diff per lane and team                 │
-│    - lane state snapshots (min 5/10/15)          │
+│    - lane state snapshots (min 8/14/20)          │
 │    - fight detection and classification          │
-│    - jungle path reconstruction                  │
+│    - jungle path reconstruction (approx., from   │
+│      jungleMinionsKilled deltas + positions)     │
 │    - objective + tradeoff pairing                │
 │    - recall sync analysis                        │
+│    - ban championIds → names via Data Dragon     │
+│      (app/digest/champions.py, cached on disk)   │
 └──────────────┬───────────────────────────────────┘
                │ GameDigest (~2 KB JSON)
                ├──────────────────────────────────────┐
                ▼                                      ▼
 ┌─────────────────────────────────┐    ┌─────────────────────────────────┐
 │  DuckDB  (app/storage/db.py)    │    │  Ollama  (app/llm/agent.py)     │
-│  save_game() / query_history()  │    │  Local LLM inference only        │
-└─────────────────────────────────┘    │  generate_debrief()             │
-                                       │  answer_query()                 │
-                                       └──────────────┬──────────────────┘
+│  save_game() / get_game() /     │    │  Local LLM inference only       │
+│  list_games() / get_all_digests │    │  generate_agenda(digest)        │
+│  Derived tables: games,         │    │  answer_question(question,conn) │
+│  lane_states, objectives,       │    │    — two-stage text-to-SQL,     │
+│  fights                         │    │      gated by app/llm/sql.py    │
+└─────────────────────────────────┘    └──────────────┬──────────────────┘
                                                       │ prose output
                                                       ▼
                                        ┌─────────────────────────────────┐
                                        │  FastAPI  (app/api/)            │
-                                       │  POST /debrief                  │
-                                       │  POST /query                    │
+                                       │  GET  /games                    │
+                                       │  GET  /games/{id}/digest        │
+                                       │  GET  /games/{id}/agenda        │
+                                       │  POST /ask                      │
                                        │  GET  /health                   │
+                                       │  (POST /debrief, POST /query    │
+                                       │   kept as deprecated shims)     │
                                        └──────────────┬──────────────────┘
                                                       │ JSON response
                                                       ▼
                                        ┌─────────────────────────────────┐
-                                       │  Frontend  (Phase 2)            │
-                                       │  Next.js App Router             │
+                                       │  Frontend (Next.js App Router)  │
+                                       │  Landing, scrim list,           │
+                                       │  debrief view, Q&A page         │
                                        └─────────────────────────────────┘
 ```
 
@@ -88,8 +98,9 @@ DataSource (abstract)
 
 ## Phase roadmap
 
-| Phase | Scope |
-|-------|-------|
-| 1 (current) | Skeleton only. /health works. All business logic is stubs. |
-| 2 | Implement build_digest(), Ollama prompts, DuckDB persistence, frontend. |
-| 3 | Implement GridDataSource for production GRID data. |
+| Phase | Status | Scope |
+|-------|--------|-------|
+| 1 | done | Skeleton, settings, `DataSource` abstract, `/health`. |
+| 2 | done | `build_digest()`, Ollama agent (`generate_agenda` + `answer_question` with mechanical fallback), DuckDB persistence (`games`, `lane_states`, `objectives`, `fights`), Next.js frontend (landing, scrim list, debrief view, Q&A page). |
+| 2.5 (hardening) | done | Loopback validator on `OLLAMA_HOST`, `/ask` input bounds, `game_id` regex, Ollama timeouts, narrow exception handling, env-driven CORS. Two-stage text-to-SQL Q&A gated by `app/llm/sql.py`. Position-based `jungle_path` (no fake `MONSTER_KILL` events). Champion-name resolver via cached Data Dragon. CWD-independent cache + DuckDB paths. Version single-sourced from `pyproject.toml`. |
+| 3 | in progress | `GridDataSource.stream_grid_events` JSONL parser shipped; HTTP fetcher is a stub awaiting a GRID partnership. |

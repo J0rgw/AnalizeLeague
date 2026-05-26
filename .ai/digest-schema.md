@@ -12,9 +12,10 @@ All field names in code match this document exactly.
 
 - **Gold/CS/XP diffs**: positive = the analyzed team (`meta.side`) is ahead.
 - **Timestamps** (`t`): seconds from game start.
-- **`lane_states`**: snapshots taken at minutes 5, 10, 15 by default.
-- **`fights`**: only engagements with ≥ 1 kill (skirmish threshold tunable in Phase 2).
-- **`jungle_path`**: ordered list of camp label strings, e.g. `["red_buff", "raptors", "wolves", "blue_buff"]`.
+- **`lane_states`**: snapshots taken at minutes **8, 14, 20** (laning, mid-game, mid-late). Match `_LANE_CHECKPOINTS` in `backend/app/digest/builder.py`.
+- **`fights`**: only engagements with ≥ 1 kill, clustered within `_FIGHT_WINDOW_MS` (15 s).
+- **`jungle_path`**: ordered camp labels from the first ~4 minutes, reconstructed **approximately** from `jungleMinionsKilled` deltas + jungler position (Riot timelines do not emit per-camp events). See `/.ai/data-sources.md`.
+- **`bans`**: champion **names** resolved via the cached Data Dragon CDN. If both network and cache fail the resolver degrades to `str(championId)`, preserving the `list[str]` schema.
 
 ## Full annotated schema
 
@@ -51,12 +52,12 @@ All field names in code match this document exactly.
 
   "lane_states": [
     {
-      "at_min":    "int    — minute mark (5 | 10 | 15)",
+      "at_min":    "int    — minute mark (8 | 14 | 20)",
       "lane":      "string — 'top' | 'jng' | 'mid' | 'bot' | 'sup'",
       "gold_diff": "int    — positive = analyzed team ahead",
       "cs_diff":   "int    — positive = analyzed team ahead",
       "xp_diff":   "int    — positive = analyzed team ahead",
-      "kills":     "int    — kills by analyzed team in this lane at this snapshot"
+      "kills":     "int    — cumulative kills by the analyzed team's player in this lane up to the snapshot"
     }
   ],
 
@@ -67,8 +68,8 @@ All field names in code match this document exactly.
   "objectives": [
     {
       "t":                  "int    — timestamp in seconds",
-      "type":               "string — 'baron' | 'dragon' | 'herald' | 'tower' | 'inhibitor'",
-      "subtype":            "string — e.g. 'infernal', 'outer', '' for none",
+      "type":               "string — 'baron' | 'dragon' | 'herald' | 'tower' | 'inhibitor' | 'void_grubs'",
+      "subtype":            "string — dragon element (e.g. 'infernal'), tower descriptor (e.g. 'mid_outer'), inhibitor lane, '' otherwise",
       "team":               "string — 'blue' | 'red' (team that secured the objective)",
       "gold_diff_at_event": "int    — team gold diff at the moment of the objective",
       "tradeoff":           "string — what the other team did simultaneously, or ''"

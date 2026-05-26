@@ -92,8 +92,30 @@ def test_tower_objective(sample_raw_game: dict[str, Any]) -> None:
 
 def test_jungle_path_blue(sample_raw_game: dict[str, Any]) -> None:
     digest = build_digest(sample_raw_game)
-    # Vi (pid=2, blue jungler) cleared blue_buff at 1:30
-    assert "blue_buff" in digest.jungle_path.blue
+    # The fixture seats Vi at blue_buff, wolves, raptors, gromp on minutes 1-4
+    # and her jungleMinionsKilled increments every minute, so all four labels
+    # should be reconstructed from positions alone (no MONSTER_KILL events).
+    assert digest.jungle_path.blue[:4] == ["blue_buff", "wolves", "raptors", "gromp"]
+
+
+def test_jungle_path_red(sample_raw_game: dict[str, Any]) -> None:
+    digest = build_digest(sample_raw_game)
+    # Symmetric: Lee Sin (pid=7) clears the red-side mirror.
+    assert digest.jungle_path.red[:4] == ["blue_buff", "wolves", "raptors", "gromp"]
+
+
+def test_jungle_path_ignores_fake_monster_kill_events(
+    sample_raw_game: dict[str, Any],
+) -> None:
+    """Regression: previously the builder relied on a MONSTER_KILL event that
+    Riot does not emit. The fixture now contains zero such events, so a clean
+    path proves the reconstruction is position-based."""
+    all_events = [
+        e for f in sample_raw_game["timeline"]["info"]["frames"] for e in f.get("events", [])
+    ]
+    assert not any(e.get("type") == "MONSTER_KILL" for e in all_events)
+    digest = build_digest(sample_raw_game)
+    assert len(digest.jungle_path.blue) >= 4
 
 
 def test_bans_populated(sample_raw_game: dict[str, Any]) -> None:

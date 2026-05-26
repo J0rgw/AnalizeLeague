@@ -1,16 +1,17 @@
 """
 LLM agent using Ollama for local inference.
 
-Privacy guarantee: this module sends ONLY the compact GameDigest JSON to
-Ollama, which runs entirely on the local machine. Raw game data and player
-identities are never transmitted to any external service.
+Privacy guarantee: this module sends ONLY pre-aggregated, derived data to
+Ollama, which runs entirely on the local machine. Raw game payloads, player
+identities, and ungated rows never leave the box.
 
-The LLM role is narration only — all quantitative analysis was already
-done by build_digest(). See /.ai/architecture.md for the design rationale.
+The LLM role is narration only — all quantitative work is done by
+build_digest() (per game) or DuckDB SQL (across games). The model never
+performs arithmetic on its own.
 
 Two public functions:
   generate_agenda(digest)         → list[AgendaItem]
-  answer_question(question, conn) → QAResponse
+  answer_question(question, conn) → QAResponse   (two-stage text-to-SQL)
 """
 
 from __future__ import annotations
@@ -20,10 +21,18 @@ import json
 import logging
 from typing import Any
 
+import duckdb
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 from app.digest.models import GameDigest
+from app.llm.sql import (
+    MAX_LIMIT,
+    SCHEMA_DESCRIPTION,
+    SqlValidationError,
+    run_safe_select,
+    validate_select,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,19 +80,33 @@ Required format (return ONLY this array):
 GameDigest:
 {digest_json}"""
 
-_QA_SYSTEM = """\
-You are a League of Legends coaching assistant. Answer the analyst's question \
-based ONLY on the provided game data. Do not invent statistics. If the answer is \
-not in the data, say so explicitly. Return ONLY valid JSON."""
+_SQL_GEN_SYSTEM = """\
+You translate analyst questions into DuckDB SELECT queries over a fixed schema. \
+Rules: ONLY a single SELECT (or WITH ... SELECT). No INSERT, UPDATE, DELETE, \
+DROP, ALTER, CREATE, ATTACH, COPY, PRAGMA, or any other side-effecting keyword. \
+Reference only the listed tables. Prefer aggregation (AVG, SUM, COUNT, etc.). \
+Include game_id in the SELECT when individual games are relevant. \
+Return ONLY JSON of the form {"sql": "SELECT ..."} — no markdown, no commentary."""
 
-_QA_USER = """\
+_SQL_GEN_USER = """\
+{schema}
+
 Question: {question}
 
-Available game data ({n} games):
-{summaries}
+Return JSON: {{"sql": "SELECT ..."}}"""
 
-Return JSON:
-{{"answer": "<your answer>", "game_ids_referenced": ["<game_id>", ...]}}"""
+_NARRATE_SYSTEM = """\
+You narrate the result of a DuckDB query for a League of Legends analyst. \
+Base your answer ONLY on the rows provided. Do not invent numbers. If rows are \
+empty, say so plainly. Return ONLY JSON of the form {"answer": "..."}."""
+
+_NARRATE_USER = """\
+Question: {question}
+
+Query rows ({n} returned, columns: {columns}):
+{rows_json}
+
+Return JSON: {{"answer": "<focused prose answer>"}}"""
 
 
 # ── Fallback (no LLM) ─────────────────────────────────────────────────────────
@@ -173,30 +196,114 @@ def _compact_digest(digest: GameDigest) -> str:
     return digest.model_dump_json(exclude_none=True)
 
 
-def _digest_summary_for_qa(digest: GameDigest) -> dict[str, Any]:
-    """Produce a compressed summary dict for multi-game Q&A context."""
-    return {
-        "game_id": digest.meta.game_id,
-        "patch": digest.meta.patch,
-        "result": digest.meta.result,
-        "side": digest.meta.side,
-        "duration_min": round(digest.meta.duration_s / 60, 1),
-        "draft_blue": digest.draft.blue.model_dump(),
-        "draft_red": digest.draft.red.model_dump(),
-        "gold_diff_at_20min": (
-            digest.team_gold_diff_by_min[20] if len(digest.team_gold_diff_by_min) > 20 else None
+async def _ollama_chat_json(system: str, user: str) -> dict[str, Any]:
+    """
+    Send a single chat turn to Ollama with format=json and return the parsed dict.
+
+    Raises:
+        ImportError  — ollama package missing.
+        asyncio.TimeoutError — model didn't respond within settings.ollama_timeout_s.
+        json.JSONDecodeError | ValueError — model returned no/invalid JSON.
+        Exception — network / Ollama-side errors (caller decides).
+    """
+    import ollama  # lazy: keep the app importable without the package present
+
+    client = ollama.AsyncClient(host=settings.ollama_host)
+    response = await asyncio.wait_for(
+        client.chat(
+            model=settings.ollama_model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            format="json",
         ),
-        "objectives": [
-            {"t": o.t, "type": o.type, "subtype": o.subtype, "team": o.team}
-            for o in digest.objectives
-        ],
-        "fights_count": len(digest.fights),
-        "lane_states_14min": [
-            {"lane": ls.lane, "gold_diff": ls.gold_diff}
-            for ls in digest.lane_states
-            if ls.at_min == 14
-        ],
-    }
+        timeout=settings.ollama_timeout_s,
+    )
+    raw_content = response.message.content
+    if not raw_content:
+        raise ValueError("Ollama returned empty content")
+    parsed = json.loads(raw_content)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Ollama returned non-object JSON: {type(parsed).__name__}")
+    return parsed
+
+
+async def _generate_sql(question: str) -> str:
+    """Ask the LLM for a SELECT statement answering `question`. Patched in tests."""
+    parsed = await _ollama_chat_json(
+        system=_SQL_GEN_SYSTEM,
+        user=_SQL_GEN_USER.format(schema=SCHEMA_DESCRIPTION, question=question),
+    )
+    sql = parsed.get("sql", "")
+    if not isinstance(sql, str):
+        raise ValueError("Ollama returned non-string `sql` field")
+    return sql
+
+
+async def _narrate_sql_result(
+    question: str,
+    columns: list[str],
+    rows: list[tuple[Any, ...]],
+) -> str:
+    """Ask the LLM to narrate the SQL result rows. Patched in tests."""
+    # Cap rows in the prompt to keep tokens low even if the validator allowed up to MAX_LIMIT.
+    rows_for_prompt = [dict(zip(columns, _jsonable(row), strict=True)) for row in rows[:MAX_LIMIT]]
+    parsed = await _ollama_chat_json(
+        system=_NARRATE_SYSTEM,
+        user=_NARRATE_USER.format(
+            question=question,
+            n=len(rows),
+            columns=", ".join(columns) or "(none)",
+            rows_json=json.dumps(rows_for_prompt, default=str),
+        ),
+    )
+    answer = parsed.get("answer", "")
+    if not isinstance(answer, str) or not answer.strip():
+        raise ValueError("Ollama returned no `answer` field")
+    return answer
+
+
+def _jsonable(row: tuple[Any, ...]) -> list[Any]:
+    """Convert DuckDB row cells (Decimal, datetime, etc.) into JSON-safe primitives."""
+    out: list[Any] = []
+    for cell in row:
+        if cell is None or isinstance(cell, (str, int, float, bool)):
+            out.append(cell)
+        else:
+            out.append(str(cell))
+    return out
+
+
+def _extract_game_ids(columns: list[str], rows: list[tuple[Any, ...]]) -> list[str]:
+    """If the result set has a game_id column, return distinct values preserving order."""
+    if "game_id" not in columns:
+        return []
+    idx = columns.index("game_id")
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in rows:
+        gid = row[idx]
+        if isinstance(gid, str) and gid not in seen:
+            seen.add(gid)
+            out.append(gid)
+    return out
+
+
+def _fallback_qa_answer(reason: str, games_in_db: int) -> QAResponse:
+    """Construct a graceful-degradation QAResponse the frontend can display."""
+    if games_in_db == 0:
+        return QAResponse(
+            answer="No games in the database yet. Run the seed script to ingest some matches.",
+            game_ids_referenced=[],
+        )
+    return QAResponse(
+        answer=(
+            f"{reason} Found {games_in_db} game(s) in the database — "
+            "try rephrasing or check that Ollama is running (`ollama serve`)."
+        ),
+        game_ids_referenced=[],
+    )
 
 
 # ── Public functions ──────────────────────────────────────────────────────────
@@ -261,84 +368,98 @@ async def generate_agenda(digest: GameDigest) -> list[AgendaItem]:
 
 async def answer_question(
     question: str,
-    digests: list[GameDigest],
+    conn: duckdb.DuckDBPyConnection,
 ) -> QAResponse:
     """
-    Answer a natural-language question about stored games using the local Ollama model.
+    Two-stage text-to-SQL Q&A over the derived DuckDB tables.
 
-    Args:
-        question: Free-text question from the analyst.
-        digests:  List of recent GameDigests to use as context.
+    1. Ask Ollama for a SELECT translating the question against SCHEMA_DESCRIPTION.
+    2. Run it through validate_select() — the SQL is rejected if it touches any
+       table outside the whitelist, contains forbidden keywords, has comments,
+       or is more than a single statement.
+    3. Execute the validated SQL on a fresh cursor (read-only by construction —
+       the validator is the only path that produces executable SQL).
+    4. Ask Ollama to narrate the rows in plain prose.
+
+    Any failure (Ollama down, validation fails, execution fails, narration
+    fails) falls back to a graceful-degradation message; QAResponse shape
+    is preserved.
     """
-    summaries = [_digest_summary_for_qa(d) for d in digests]
-    summaries_json = json.dumps(summaries, indent=2)
-    game_ids = [d.meta.game_id for d in digests]
+    games_in_db = _count_games(conn)
+    if games_in_db == 0:
+        return _fallback_qa_answer("", games_in_db=0)
 
+    # ── Stage 1: SQL generation ──
     try:
-        import ollama
+        raw_sql = await _generate_sql(question)
     except ImportError:
-        logger.warning("ollama package not installed — returning placeholder answer")
+        logger.warning("ollama package not installed — Q&A fallback")
+        return _fallback_qa_answer("Ollama is not installed.", games_in_db)
+    except asyncio.TimeoutError:
+        logger.warning("Ollama timed out on SQL generation after %ds", settings.ollama_timeout_s)
+        return _fallback_qa_answer(
+            f"The model did not respond within {settings.ollama_timeout_s}s.", games_in_db
+        )
+    except (json.JSONDecodeError, ValueError, AttributeError, ValidationError) as exc:
+        logger.warning("SQL generation returned unusable output (%s: %s)", type(exc).__name__, exc)
+        return _fallback_qa_answer("Could not generate a query for that question.", games_in_db)
+    except Exception as exc:
+        logger.warning("Ollama unreachable during SQL generation (%s: %s)", type(exc).__name__, exc)
+        return _fallback_qa_answer("Ollama is not available.", games_in_db)
+
+    # ── Stage 2: validate ──
+    try:
+        safe_sql = validate_select(raw_sql)
+    except SqlValidationError as exc:
+        logger.warning("Rejected generated SQL (%s): %r", exc, raw_sql)
+        return _fallback_qa_answer("The generated query did not pass safety checks.", games_in_db)
+
+    # ── Stage 3: execute ──
+    try:
+        columns, rows = run_safe_select(conn, safe_sql)
+    except duckdb.Error as exc:
+        logger.warning("DuckDB rejected safe SQL (%s): %s", type(exc).__name__, exc)
+        return _fallback_qa_answer("The query failed to execute.", games_in_db)
+
+    logger.info("Q&A SQL: %s  →  %d rows", safe_sql, len(rows))
+
+    if not rows:
         return QAResponse(
-            answer=(
-                f"Ollama Python package is not installed. "
-                f"Found {len(digests)} game(s) in the database. "
-                f"Install with: uv add ollama"
-            ),
+            answer="The query returned no rows. Try rephrasing or broadening the question.",
             game_ids_referenced=[],
         )
 
+    # ── Stage 4: narrate ──
+    referenced = _extract_game_ids(columns, rows)
     try:
-        client = ollama.AsyncClient(host=settings.ollama_host)
-        prompt = _QA_USER.format(
-            question=question,
-            n=len(digests),
-            summaries=summaries_json,
-        )
-        response = await asyncio.wait_for(
-            client.chat(
-                model=settings.ollama_model,
-                messages=[
-                    {"role": "system", "content": _QA_SYSTEM},
-                    {"role": "user", "content": prompt},
-                ],
-                format="json",
-            ),
-            timeout=settings.ollama_timeout_s,
-        )
-        raw_content = response.message.content
-        if not raw_content:
-            raise ValueError("Ollama returned empty content")
-        parsed = json.loads(raw_content)
-        return QAResponse.model_validate(parsed)
+        answer = await _narrate_sql_result(question, columns, rows)
+    except ImportError:
+        return _fallback_qa_answer("Ollama is not installed.", games_in_db)
     except asyncio.TimeoutError:
-        logger.warning(
-            "Ollama timed out after %ds on Q&A — returning placeholder",
-            settings.ollama_timeout_s,
-        )
+        logger.warning("Ollama timed out on narration after %ds", settings.ollama_timeout_s)
         return QAResponse(
             answer=(
-                f"The local model did not respond within {settings.ollama_timeout_s}s. "
-                "Try a simpler question or check that Ollama is responsive."
+                f"Query returned {len(rows)} row(s) but the model did not narrate "
+                f"within {settings.ollama_timeout_s}s."
             ),
-            game_ids_referenced=game_ids,
+            game_ids_referenced=referenced,
         )
-    except (json.JSONDecodeError, ValidationError, ValueError, AttributeError) as exc:
-        logger.warning(
-            "LLM returned unusable Q&A output (%s: %s)", type(exc).__name__, exc
-        )
+    except (json.JSONDecodeError, ValueError, AttributeError, ValidationError) as exc:
+        logger.warning("Narration returned unusable output (%s: %s)", type(exc).__name__, exc)
         return QAResponse(
-            answer="Could not parse a structured answer from the model. Please rephrase.",
-            game_ids_referenced=[],
+            answer=f"Query returned {len(rows)} row(s) but the model could not summarize them.",
+            game_ids_referenced=referenced,
         )
     except Exception as exc:
-        logger.warning(
-            "Ollama unreachable for Q&A (%s: %s)", type(exc).__name__, exc
-        )
+        logger.warning("Ollama unreachable during narration (%s: %s)", type(exc).__name__, exc)
         return QAResponse(
-            answer=(
-                f"Ollama is not available. "
-                f"Found {len(digests)} game(s) in the database. "
-                f"Start Ollama and retry: `ollama serve`."
-            ),
-            game_ids_referenced=[],
+            answer=f"Query returned {len(rows)} row(s) but Ollama is not available to narrate.",
+            game_ids_referenced=referenced,
         )
+
+    return QAResponse(answer=answer, game_ids_referenced=referenced)
+
+
+def _count_games(conn: duckdb.DuckDBPyConnection) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM games").fetchone()
+    return int(row[0]) if row else 0

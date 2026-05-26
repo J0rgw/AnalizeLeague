@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.digest.models import GameDigest
 from app.llm.agent import AgendaItem, QAResponse, answer_question, generate_agenda
-from app.storage.db import get_agenda, get_all_digests, get_game, list_games, save_agenda
+from app.storage.db import get_agenda, get_game, list_games, save_agenda
 
 logger = logging.getLogger(__name__)
 
@@ -109,15 +109,14 @@ async def get_game_agenda(request: Request, game_id: str = GameIdPath) -> list[A
 
 @router.post("/ask", response_model=QAResponse)
 async def ask(body: AskRequest, request: Request) -> QAResponse:
-    """Answer a natural-language question over all stored scrim data."""
-    db = _db(request)
-    digests = get_all_digests(db, limit=10)
-    if not digests:
-        return QAResponse(
-            answer="No games in the database yet. Run the seed script to ingest some matches.",
-            game_ids_referenced=[],
-        )
-    return await answer_question(body.question, digests)
+    """
+    Answer a natural-language question over all stored scrim data.
+
+    Routes through the two-stage text-to-SQL pipeline: the model proposes a
+    SELECT against the derived DuckDB tables, the validator (app/llm/sql.py)
+    enforces a whitelist + safe-keyword rules, and the rows are then narrated.
+    """
+    return await answer_question(body.question, _db(request))
 
 
 # ── Legacy endpoints (kept for compatibility) ─────────────────────────────────
@@ -160,7 +159,5 @@ async def post_debrief(body: DebriefRequest, request: Request) -> DebriefRespons
 @router.post("/query", response_model=QueryResponse, deprecated=True)
 async def post_query(body: QueryRequest, request: Request) -> QueryResponse:
     """Deprecated — use POST /ask instead."""
-    db = _db(request)
-    digests = get_all_digests(db, limit=5)
-    qa = await answer_question(body.question, digests)
+    qa = await answer_question(body.question, _db(request))
     return QueryResponse(game_id=body.game_id, answer=qa.answer)

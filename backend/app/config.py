@@ -12,12 +12,17 @@ commands from /backend so that backend/.env is found automatically.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", ""}
+
+# config.py lives at backend/app/config.py → parents[2] is the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_DUCKDB_PATH = str(_REPO_ROOT / "data" / "analizeleague.duckdb")
 
 
 class Settings(BaseSettings):
@@ -45,8 +50,8 @@ class Settings(BaseSettings):
     )
 
     duckdb_path: str = Field(
-        default="../data/analizeleague.duckdb",
-        description="Path to the DuckDB database file",
+        default=_DEFAULT_DUCKDB_PATH,
+        description="Path to the DuckDB database file (defaults to <repo>/data/analizeleague.duckdb)",
     )
 
     env: str = Field(default="dev", description="Runtime environment: dev | prod")

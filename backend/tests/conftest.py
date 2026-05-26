@@ -5,10 +5,13 @@ Fixtures:
   sample_raw_game  — minimal Riot API match + timeline dict, complete enough for build_digest
   in_memory_db     — fresh DuckDB connection with schema applied
   test_client      — FastAPI TestClient with in-memory DuckDB injected
+  _no_network_ddragon (autouse) — stub Data Dragon so resolve_champion_name
+    never makes an HTTP request during tests.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import duckdb
@@ -16,6 +19,30 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.main import app
+from app.digest import champions as champions_mod
+
+
+@pytest.fixture(autouse=True)
+def _no_network_ddragon(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """
+    Tests must never reach the Data Dragon CDN, AND must not share a disk
+    cache across tests (a cached champion.json from one test would silently
+    satisfy another test that's supposed to exercise the no-network path).
+    """
+    monkeypatch.setattr(
+        champions_mod,
+        "_fetch_champion_json",
+        lambda _version: None,
+    )
+    # Redirect the disk cache to a per-test temp dir.
+    monkeypatch.setattr(champions_mod, "_CACHE_DIR", tmp_path / "ddragon")  # type: ignore[arg-type]
+    champions_mod.clear_cache()
+    yield
+    champions_mod.clear_cache()
+
 
 # ── Minimal Riot API fixture ──────────────────────────────────────────────────
 
@@ -37,6 +64,32 @@ def _make_participant(
     }
 
 
+# Realistic early-clear positions for the junglers in this fixture, so that
+# _build_jungle_path's position-to-camp inference picks up a meaningful path.
+_BLUE_JNG_POS_BY_MIN: dict[int, tuple[int, int]] = {
+    1: (3_850, 7_950),  # blue_buff
+    2: (3_900, 6_500),  # wolves
+    3: (6_900, 5_500),  # raptors
+    4: (2_150, 8_400),  # gromp
+}
+_RED_JNG_POS_BY_MIN: dict[int, tuple[int, int]] = {
+    1: (10_950, 6_850),  # blue_buff (red side)
+    2: (10_800, 8_350),  # wolves (red side)
+    3: (7_900, 9_500),  # raptors (red side)
+    4: (12_750, 6_400),  # gromp (red side)
+}
+
+
+def _position_for(pid: int, t_ms: int) -> tuple[int, int]:
+    minute = t_ms // 60_000
+    if pid == 2 and minute in _BLUE_JNG_POS_BY_MIN:
+        return _BLUE_JNG_POS_BY_MIN[minute]
+    if pid == 7 and minute in _RED_JNG_POS_BY_MIN:
+        return _RED_JNG_POS_BY_MIN[minute]
+    # Default: generic mid-map position scaled by pid for variety.
+    return 3_000 + pid * 200, 3_000 + pid * 200
+
+
 def _make_frame(
     t_ms: int,
     pids: list[int],
@@ -48,13 +101,14 @@ def _make_frame(
         # Normalise pid to 1-5 within each team so blue always has more gold than red
         relative_pid = pid if pid <= 5 else pid - 5
         team_bonus = 300 if pid <= 5 else 0
+        x, y = _position_for(pid, t_ms)
         pframes[str(pid)] = {
             "participantId": pid,
             "totalGold": gold_base + relative_pid * 50 + team_bonus,
             "minionsKilled": (t_ms // 60_000) * 6 + pid,
             "jungleMinionsKilled": 0 if pid not in (2, 7) else (t_ms // 60_000) * 4,
             "xp": gold_base * 2 + pid * 30,
-            "position": {"x": 3000 + pid * 200, "y": 3000 + pid * 200},
+            "position": {"x": x, "y": y},
         }
     return {"timestamp": t_ms, "participantFrames": pframes, "events": events or []}
 
@@ -112,14 +166,10 @@ def sample_raw_game() -> dict[str, Any]:
         "laneType": "MID_LANE",
         "killerId": 3,
     }
-    camp_event = {
-        "type": "MONSTER_KILL",
-        "timestamp": 90_000,  # 1:30
-        "monsterType": "BLUE_SENTINEL",
-        "killerId": 2,
-        "position": {"x": 3500, "y": 8000},
-    }
-
+    # NOTE: the Riot timeline does NOT emit a "MONSTER_KILL" event for normal
+    # camps — only ELITE_MONSTER_KILL for dragon/herald/baron/grubs.
+    # _build_jungle_path reconstructs the early clear from jungleMinionsKilled
+    # increments + jungler positions instead.
     frames = [
         _make_frame(0, pids),
         *[
@@ -128,9 +178,7 @@ def sample_raw_game() -> dict[str, Any]:
                 pids,
                 gold_base=500 + m * 100,
                 events=(
-                    [camp_event]
-                    if m == 1
-                    else [dragon_event]
+                    [dragon_event]
                     if m == 10
                     else fight_events
                     if m == 15
